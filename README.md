@@ -150,6 +150,12 @@ We would like to thank the developers of the following projects for their open-s
 - [Search-R1](https://github.com/PeterGriffinJin/Search-R1)
 - [O2-Searcher](https://github.com/KnowledgeXLab/O2-Searcher)
 
+## Contact
+For any questions or feedback, please:
+
+- Open an issue in the GitHub repository
+- Reach out to us at wurong1159@zju.edu.cn
+
 ## Citation
 If you find our paper and code useful, please kindly cite us. A BibTeX entry will be provided upon publication.
 ```bibtex
