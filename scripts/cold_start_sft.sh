@@ -1,8 +1,12 @@
 #!/bin/bash
 
 # ================= Configuration =================
-# LLaMA-Factory directory
-LLAMA_FACTORY_DIR="./LLaMA-Factory"
+# Get the script directory and project root directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# LLaMA-Factory directory (relative to project root)
+LLAMA_FACTORY_DIR="${PROJECT_ROOT}/LLaMA-Factory"
 DATA_DIR="${LLAMA_FACTORY_DIR}/data"
 DATASET_INFO_FILE="${DATA_DIR}/dataset_info.json"
 FINAL_OUTPUT_FILE="exp_rl_coldstart_multi.json"

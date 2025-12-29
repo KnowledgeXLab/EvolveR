@@ -87,7 +87,7 @@ Please begin generating the reasoning trajectory:
 """
 
 # System prompt (for multi-turn dialogue format)
-prompt_multi = "Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information or get new experience principles. After reasoning, you can search for past experiences by <search_experience> query </search_experience> to get relevant past experience principles (may be guilding or warning principles) and it will return the top searched results between <experience> and </experience>. You can use these principles which you think is helpful to help you answer the question. If you find you lack some knowledge, you can call a search engine by <search_knowledge> query </search_knowledge> and it will return the top searched results between <information> and </information>. You can search knowledge and experience as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>"
+prompt_multi = "Answer the given question. You must conduct reasoning inside <think> and </think> first every time you get new information or get new experience principles. After reasoning, you can search for past experiences by <search_experience> query </search_experience> to get relevant past experience principles (may be guiding or warning principles) and it will return the top searched results between <experience> and </experience>. You can use these principles which you think is helpful to help you answer the question. If you find you lack some knowledge, you can call a search engine by <search_knowledge> query </search_knowledge> and it will return the top searched results between <information> and </information>. You can search knowledge and experience as many times as your want. If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>"
 
 # ================= Configuration =================
 # API Configuration
@@ -159,22 +159,38 @@ def match_hotpotqa_questions(selected_questions, hotpotqa_data):
     return matched
 
 
-def gpt4_inference(prompt, api_key, base_url):
-    """GPT-4 inference"""
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt}
+def gpt4_inference(prompt, api_key, base_url, max_retries=3, timeout=120):
+    """GPT-4 inference with error handling and retry"""
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt}
+                        ]
+                    }
                 ]
-            }
-        ]
-    )
-    print('gpt4:', response.choices[0].message.content)
-    return response.choices[0].message.content
+            )
+            
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("Empty response from API")
+            
+            content = response.choices[0].message.content
+            print(f'gpt4 (attempt {attempt + 1}):', content[:200] + '...' if len(content) > 200 else content)
+            return content
+            
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise Exception(f"GPT-4 API call failed after {max_retries} attempts: {str(e)}")
+            print(f"Attempt {attempt + 1} failed: {str(e)}, retrying...")
+            time.sleep(2 ** attempt)  # Exponential backoff
+    
+    raise Exception("GPT-4 API call failed")
 
 
 def process_response(response):
@@ -222,10 +238,14 @@ def process_response(response):
     
     # Get content of each tag
     think_list = tag_contents.get("think", [])
-    search_experience = tag_contents.get("search_experience", [""])[0].strip() if tag_contents.get("search_experience") else ""
-    search_knowledge = tag_contents.get("search_knowledge", [""])[0].strip() if tag_contents.get("search_knowledge") else ""
-    information = tag_contents.get("information", [""])[0].strip() if tag_contents.get("information") else ""
-    answer = tag_contents.get("answer", [""])[0].strip() if tag_contents.get("answer") else ""
+    search_experience_list = tag_contents.get("search_experience", [])
+    search_experience = search_experience_list[0].strip() if search_experience_list else ""
+    search_knowledge_list = tag_contents.get("search_knowledge", [])
+    search_knowledge = search_knowledge_list[0].strip() if search_knowledge_list else ""
+    information_list = tag_contents.get("information", [])
+    information = information_list[0].strip() if information_list else ""
+    answer_list = tag_contents.get("answer", [])
+    answer = answer_list[0].strip() if answer_list else ""
     
     # Get the first think as initial reasoning
     initial_think = think_list[0].strip() if len(think_list) > 0 else ""
@@ -282,6 +302,39 @@ def process_response(response):
     return messages, None
 
 
+def merge_consecutive_same_role(messages):
+    """Merge consecutive messages with the same role into one message
+    
+    Args:
+        messages: List of message dicts with 'role' and 'content' keys
+    
+    Returns:
+        List of merged messages
+    """
+    if not messages:
+        return messages
+    
+    merged = []
+    current_msg = messages[0].copy()
+    
+    for msg in messages[1:]:
+        if msg['role'] == current_msg['role']:
+            # Merge content: concatenate with newline if both have content
+            if current_msg.get('content') and msg.get('content'):
+                current_msg['content'] = current_msg['content'] + msg['content']
+            elif msg.get('content'):
+                current_msg['content'] = msg['content']
+        else:
+            # Different role, save current and start new
+            merged.append(current_msg)
+            current_msg = msg.copy()
+    
+    # Don't forget the last message
+    merged.append(current_msg)
+    
+    return merged
+
+
 def make_turn_from_response(item):
     """Construct multi-turn dialogue format from response"""
     message = []
@@ -307,6 +360,9 @@ def make_turn_from_response(item):
         return None, missing_tags
     
     message.extend(segments)
+    
+    # Merge consecutive messages with the same role
+    message = merge_consecutive_same_role(message)
     
     info = {
         'id': idd,
@@ -336,8 +392,12 @@ if __name__ == '__main__':
     print("Non-NQ data count:", len(non_nq_data))  # 90447
     
     # Sample data
-    random.seed(RANDOM_SEED)
-    sampled_data = random.sample(non_nq_data, SAMPLE_SIZE)
+    if len(non_nq_data) < SAMPLE_SIZE:
+        print(f"Warning: Only {len(non_nq_data)} samples available, less than requested {SAMPLE_SIZE}")
+        sampled_data = non_nq_data
+    else:
+        random.seed(RANDOM_SEED)
+        sampled_data = random.sample(non_nq_data, SAMPLE_SIZE)
     selected_questions = [sample['question'] for sample in sampled_data]
     
     # Match questions in HotpotQA
@@ -365,6 +425,8 @@ if __name__ == '__main__':
                 start_time = time.time()
                 response = gpt4_inference(formatted_prompt, API_KEY, BASE_URL)
                 end_time = time.time()
+                elapsed_time = end_time - start_time
+                print(f"[{index}] API call completed in {elapsed_time:.2f}s")
                 
                 # Construct result item
                 result_item = {
