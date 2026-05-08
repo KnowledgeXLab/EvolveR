@@ -29,6 +29,7 @@ This repository contains the official implementation of **EvolveR**, a framework
 ---
 
 ## 📰 Updates
+- **`2026-05-01`**: Paper accepted at ICML 2026.
 - **`2025-10-21`**: Paper is publicly available in [arxiv](http://arxiv.org/abs/2510.16079).
 - **`2025-10-20`**: Codebase is publicly available.
 
